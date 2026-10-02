@@ -1,14 +1,78 @@
-generator client { provider = "prisma-client-js" }
-datasource db { provider = "postgresql"; url = env("DATABASE_URL") }
+generator client {
+  provider = "prisma-client-js"
+}
 
-enum Role { PLAYER CONTENT_MANAGER SUPPORT_ADMIN SUPER_ADMIN }
-enum UserStatus { ACTIVE SUSPENDED }
-enum QuestionType { MULTIPLE_CHOICE TRUE_FALSE SEQUENCE PATTERN NUMERICAL WORD LOGIC MEMORY IMAGE_BASED AUDIO VIDEO }
-enum QuestionStatus { DRAFT UNDER_REVIEW APPROVED PUBLISHED ARCHIVED REJECTED }
-enum ChallengeStatus { IN_PROGRESS COMPLETED EXPIRED }
-enum SubStatus { PENDING ACTIVE GRACE_PERIOD PAYMENT_FAILED CANCELLED EXPIRED SUSPENDED }
-enum TxStatus { PENDING SUCCESS FAILED REVERSED REFUNDED UNKNOWN }
-enum Channel { WEB USSD SMS MOBILE }
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PLAYER
+  CONTENT_MANAGER
+  SUPPORT_ADMIN
+  SUPER_ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum QuestionType {
+  MULTIPLE_CHOICE
+  TRUE_FALSE
+  SEQUENCE
+  PATTERN
+  NUMERICAL
+  WORD
+  LOGIC
+  MEMORY
+  IMAGE_BASED
+  AUDIO
+  VIDEO
+}
+
+enum QuestionStatus {
+  DRAFT
+  UNDER_REVIEW
+  APPROVED
+  PUBLISHED
+  ARCHIVED
+  REJECTED
+}
+
+enum ChallengeStatus {
+  IN_PROGRESS
+  COMPLETED
+  EXPIRED
+}
+
+enum SubStatus {
+  PENDING
+  ACTIVE
+  GRACE_PERIOD
+  PAYMENT_FAILED
+  CANCELLED
+  EXPIRED
+  SUSPENDED
+}
+
+enum TxStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REVERSED
+  REFUNDED
+  UNKNOWN
+}
+
+enum Channel {
+  WEB
+  USSD
+  SMS
+  MOBILE
+}
 
 model User {
   id String @id @default(uuid())
@@ -70,6 +134,7 @@ model Question {
   timeLimitSec Int @default(30)
   status QuestionStatus @default(DRAFT)
   source String?
+  challengeQuestions ChallengeQuestion[]
   expiresAt DateTime?
   createdBy String?
   reviewedBy String?
@@ -100,6 +165,7 @@ model ChallengeQuestion {
   pointsAvailable Int
   servedAt DateTime?
   challenge Challenge @relation(fields: [challengeId], references: [id])
+  question Question @relation(fields: [questionId], references: [id])
   @@id([challengeId, questionId])
 }
 model QuestionAttempt {
@@ -125,9 +191,11 @@ model Streak {
   longest Int @default(0)
   lastDate String?
 }
-model Level { id Int @id
+model Level {
+  id Int @id
   name String
-  minXp Int }
+  minXp Int
+}
 model Plan {
   id String @id @default(uuid())
   code String @unique
