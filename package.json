@@ -1,0 +1,1 @@
+{ "name": "braintease", "private": true, "scripts": { "test": "node --experimental-strip-types --test packages/engine/test/*.test.ts" } }
