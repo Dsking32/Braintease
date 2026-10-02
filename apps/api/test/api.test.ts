@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createApiServer } from "../src/app.ts";
+import { createOtpDelivery } from "../src/otp-delivery.ts";
 import type {
   ApiStore,
   ChallengeRecord,
@@ -17,6 +18,8 @@ class MemoryStore implements ApiStore {
   otp: OtpRecord | null = null;
   challenge: ChallengeRecord | null = null;
   answer: StoredAnswer | null = null;
+  activeSubscription = false;
+  recentAttempts: { correct: boolean; difficulty: number }[] = [];
   user: UserRecord = { id: "user-1", msisdn: "+2348012345678", role: "PLAYER", status: "ACTIVE" };
   question: QuestionRecord = {
     id: "question-1",
@@ -52,6 +55,8 @@ class MemoryStore implements ApiStore {
   }
   async findOrCreateUser() { return this.user; }
   async findUser(id: string) { return id === this.user.id ? this.user : null; }
+  async hasActiveSubscription() { return this.activeSubscription; }
+  async listRecentAttempts() { return this.recentAttempts; }
   async listPublishedQuestions() { return [this.question]; }
 
   async findDailyChallenge(userId: string, localDate: string) {
@@ -60,7 +65,7 @@ class MemoryStore implements ApiStore {
 
   async createChallenge(userId: string, localDate: string, questions: QuestionRecord[]) {
     this.challenge = {
-      id: "challenge-1",
+      id: `challenge-${localDate}`,
       userId,
       localDate,
       status: "IN_PROGRESS",
@@ -128,6 +133,7 @@ test("OTP auth gates the daily challenge and scores answers on the server", asyn
     body: JSON.stringify({ msisdn: "+2348012345678" }),
   });
   assert.equal(requestOtp.status, 202);
+  assert.equal((await requestOtp.clone().text()).includes("123456"), false);
   assert.deepEqual(delivered, ["123456"]);
 
   const verifyOtp = await fetch(`${baseUrl}/api/v1/auth/verify-otp`, {
@@ -139,6 +145,9 @@ test("OTP auth gates the daily challenge and scores answers on the server", asyn
   const auth = await verifyOtp.json() as { token: string };
   const headers = { authorization: `Bearer ${auth.token}`, "content-type": "application/json" };
 
+  const denied = await fetch(`${baseUrl}/api/v1/challenges/start`, { method: "POST", headers, body: "{}" });
+  assert.equal(denied.status, 403);
+  store.activeSubscription = true;
   const started = await fetch(`${baseUrl}/api/v1/challenges/start`, { method: "POST", headers, body: "{}" });
   assert.equal(started.status, 201);
   const challenge = (await started.json() as { challenge: { id: string } }).challenge;
@@ -194,4 +203,90 @@ test("OTP requests are rate limited per phone number", async (context) => {
     statuses.push(response.status);
   }
   assert.deepEqual(statuses, [202, 202, 202, 429]);
+});
+
+test("daily challenge keys roll over at Lagos midnight and are reused within that day", async (context) => {
+  const store = new MemoryStore();
+  store.activeSubscription = true;
+  const clock = { current: new Date("2026-10-01T22:59:59.000Z") };
+  const server = createApiServer({
+    store,
+    otpDelivery: { async send() {} },
+    jwtSecret,
+    otpSecret,
+    challengeQuestionCount: 1,
+    makeOtp: () => "123456",
+    now: () => clock.current,
+  });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  context.after(() => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  await fetch(`${baseUrl}/api/v1/auth/request-otp`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ msisdn: "+2348012345678" }),
+  });
+  const verification = await fetch(`${baseUrl}/api/v1/auth/verify-otp`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ msisdn: "+2348012345678", code: "123456" }),
+  });
+  const { token } = await verification.json() as { token: string };
+  const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };
+
+  const startUrl = `${baseUrl}/api/v1/challenges/start`;
+  const firstResponse = await fetch(startUrl, { method: "POST", headers, body: "{}" });
+  const first = (await firstResponse.json() as { challenge: { id: string; date: string } }).challenge;
+  assert.equal(first.date, "2026-10-01");
+
+  clock.current = new Date("2026-10-01T23:00:00.000Z");
+  const nextDayResponse = await fetch(startUrl, { method: "POST", headers, body: "{}" });
+  const nextDay = (await nextDayResponse.json() as { challenge: { id: string; date: string } }).challenge;
+  assert.equal(nextDay.date, "2026-10-02");
+  assert.notEqual(nextDay.id, first.id);
+
+  const repeatedResponse = await fetch(startUrl, { method: "POST", headers, body: "{}" });
+  const repeated = (await repeatedResponse.json() as { challenge: { id: string; date: string } }).challenge;
+  assert.equal(repeated.id, nextDay.id);
+});
+
+test("production OTP request only delivers the code through its provider", async (context) => {
+  const logs: string[] = [];
+  const providerRequests: string[] = [];
+  const delivery = createOtpDelivery({
+    appEnv: "production",
+    providerUrl: "https://otp.example.test/send",
+    fetcher: async (_url, init) => {
+      providerRequests.push(String(init?.body));
+      return new Response(null, { status: 202 });
+    },
+    logInfo: (message) => logs.push(message),
+  });
+  const server = createApiServer({
+    store: new MemoryStore(),
+    otpDelivery: delivery,
+    jwtSecret,
+    otpSecret,
+    makeOtp: () => "654321",
+  });
+  await new Promise<void>((resolve) => server.listen(0, resolve));
+  context.after(() => new Promise<void>((resolve, reject) => {
+    server.close((error) => error ? reject(error) : resolve());
+  }));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const response = await fetch(`http://127.0.0.1:${address.port}/api/v1/auth/request-otp`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ msisdn: "+2348012345678" }),
+  });
+  assert.equal(response.status, 202);
+  assert.equal((await response.text()).includes("654321"), false);
+  assert.equal(providerRequests.length, 1);
+  assert.ok(providerRequests[0].includes("654321"));
+  assert.deepEqual(logs, []);
 });

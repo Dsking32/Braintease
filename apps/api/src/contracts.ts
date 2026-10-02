@@ -64,6 +64,8 @@ export interface ApiStore {
   consumeOtp(id: string): Promise<boolean>;
   findOrCreateUser(msisdn: string): Promise<UserRecord>;
   findUser(id: string): Promise<UserRecord | null>;
+  hasActiveSubscription(userId: string, at: Date): Promise<boolean>;
+  listRecentAttempts(userId: string, limit: number): Promise<{ correct: boolean; difficulty: number }[]>;
   listPublishedQuestions(): Promise<QuestionRecord[]>;
   findDailyChallenge(userId: string, localDate: string): Promise<ChallengeRecord | null>;
   createChallenge(userId: string, localDate: string, questions: QuestionRecord[]): Promise<ChallengeRecord>;

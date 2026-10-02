@@ -7,7 +7,16 @@
 		"test": "node --experimental-strip-types --test packages/engine/test/*.test.ts apps/api/test/*.test.ts",
 		"typecheck": "tsc --noEmit",
 		"prisma:validate": "prisma validate",
-		"prisma:generate": "prisma generate"
+		"prisma:generate": "prisma generate",
+		"prisma:seed": "node --experimental-strip-types prisma/seed.ts",
+		"db:migrate": "prisma migrate dev",
+		"db:deploy": "prisma migrate deploy",
+		"db:up": "docker compose up -d postgres",
+		"db:down": "docker compose down",
+		"test:integration": "node --experimental-strip-types --test apps/api/test/database.integration.test.ts"
+	},
+	"prisma": {
+		"seed": "node --experimental-strip-types prisma/seed.ts"
 	},
 	"dependencies": {
 		"@prisma/client": "6.12.0"

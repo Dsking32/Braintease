@@ -1,6 +1,10 @@
 import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { scoreAnswer, selectPublishedQuestions } from "../../../packages/engine/src/challenge.ts";
+import {
+  scoreAnswer,
+  selectAdaptiveQuestions,
+  targetDifficultyFromAttempts,
+} from "../../../packages/engine/src/challenge.ts";
 import type { ApiStore, OtpDelivery, UserRecord } from "./contracts.ts";
 
 type ApiOptions = {
@@ -131,7 +135,7 @@ export function createApiServer(options: ApiOptions) {
   if (!Number.isInteger(questionCount) || questionCount < 1) {
     throw new Error("challengeQuestionCount must be a positive integer");
   }
-  const challengeTimeZone = options.challengeTimeZone ?? "UTC";
+  const challengeTimeZone = options.challengeTimeZone ?? "Africa/Lagos";
   const localDate = () => {
     const dateParts = new Intl.DateTimeFormat("en-CA", {
       timeZone: challengeTimeZone,
@@ -228,16 +232,27 @@ export function createApiServer(options: ApiOptions) {
 
       if (method === "POST" && path === "/api/v1/challenges/start") {
         const today = localDate();
+        if (!await options.store.hasActiveSubscription(userId, now())) {
+          throw new HttpError(403, "An active subscription is required to start a challenge");
+        }
         const existing = await options.store.findDailyChallenge(userId, today);
         if (existing) {
           send(response, 200, { challenge: publicChallenge(existing) });
           return;
         }
         const published = await options.store.listPublishedQuestions();
-        const selected = selectPublishedQuestions(published, questionCount);
+        const history = await options.store.listRecentAttempts(userId, 50);
+        const targetDifficulty = targetDifficultyFromAttempts(history);
+        const selected = selectAdaptiveQuestions(published, questionCount, targetDifficulty);
         if (selected.length < questionCount) throw new HttpError(503, "Not enough published questions to start a challenge");
-        const challenge = await options.store.createChallenge(userId, today, selected);
-        send(response, 201, { challenge: publicChallenge(challenge) });
+        try {
+          const challenge = await options.store.createChallenge(userId, today, selected);
+          send(response, 201, { challenge: publicChallenge(challenge) });
+        } catch (error) {
+          const racedChallenge = await options.store.findDailyChallenge(userId, today);
+          if (!racedChallenge) throw error;
+          send(response, 200, { challenge: publicChallenge(racedChallenge) });
+        }
         return;
       }
 

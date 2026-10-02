@@ -135,6 +135,7 @@ model Question {
   status QuestionStatus @default(DRAFT)
   source String?
   challengeQuestions ChallengeQuestion[]
+  attempts QuestionAttempt[]
   expiresAt DateTime?
   createdBy String?
   reviewedBy String?
@@ -181,6 +182,7 @@ model QuestionAttempt {
   answeredAt DateTime @default(now())
   user User @relation(fields: [userId], references: [id])
   challenge Challenge @relation(fields: [challengeId], references: [id])
+  question Question @relation(fields: [questionId], references: [id])
   @@unique([challengeId, questionId])
   @@index([userId, questionId])
 }

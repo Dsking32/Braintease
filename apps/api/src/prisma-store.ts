@@ -68,6 +68,30 @@ export class PrismaStore implements ApiStore {
     });
   }
 
+  async hasActiveSubscription(userId: string, at: Date): Promise<boolean> {
+    const subscription = await this.prisma.subscription.findFirst({
+      where: {
+        userId,
+        status: "ACTIVE",
+        startsAt: { lte: at },
+        endsAt: { gt: at },
+        plan: { is: { active: true } },
+      },
+      select: { id: true },
+    });
+    return subscription !== null;
+  }
+
+  async listRecentAttempts(userId: string, limit: number): Promise<{ correct: boolean; difficulty: number }[]> {
+    const attempts = await this.prisma.questionAttempt.findMany({
+      where: { userId },
+      select: { correct: true, question: { select: { difficulty: true } } },
+      orderBy: { answeredAt: "desc" },
+      take: limit,
+    });
+    return attempts.map((attempt) => ({ correct: attempt.correct, difficulty: attempt.question.difficulty }));
+  }
+
   async listPublishedQuestions(): Promise<QuestionRecord[]> {
     return this.prisma.question.findMany({ where: { status: "PUBLISHED" } });
   }
